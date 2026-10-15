@@ -7,7 +7,7 @@ const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 const core = html.match(/<script id="core">([\s\S]*?)<\/script>/)?.[1];
 assert.ok(core, '找不到 core 脚本');
 const ctx = {}; vm.createContext(ctx); vm.runInContext(core, ctx);
-const { MARD, PALETTE, quantize, pixelate, despeckle, nearest, hexRgb } = ctx.PDCore;
+const { MARD, PALETTE, OUTLINE_IDX, quantize, style, outline, pixelate, despeckle, nearest, hexRgb } = ctx.PDCore;
 
 let n = 0;
 const t = (name, fn) => { fn(); console.log('  ok  ' + name); n++; };
@@ -124,6 +124,51 @@ t('降噪不改变非空像素数量', () => {
   const r = quantize(quadPx, 8, 8, { maxColors: 4, despeckle: 2 });
   assert.equal(r.total, 64);
   assert.ok(r.colors.every(c => c.count > 0));
+});
+
+// ---------- ⓪ 像素画风：提饱和 + 压色阶 ----------
+const onePx = (r, g, b) => Uint8ClampedArray.from([r, g, b, 255]);
+
+t('像素画风：饱和度 0 会变灰（R=G=B）', () => {
+  const o = style(onePx(200, 40, 90), { sat: 0 });
+  assert.ok(o[0] === o[1] && o[1] === o[2], `得到 ${o[0]},${o[1]},${o[2]}`);
+});
+
+t('像素画风：饱和度 100% 原样通过', () => {
+  const o = style(onePx(200, 40, 90), { sat: 1, levels: 0 });
+  assert.deepEqual([o[0], o[1], o[2]], [200, 40, 90]);
+});
+
+t('像素画风：色阶 2 时每通道只剩 0 或 255（平涂）', () => {
+  const o = style(onePx(100, 200, 50), { sat: 1, levels: 2 });
+  assert.deepEqual([o[0], o[1], o[2]], [0, 255, 0]);
+});
+
+// ---------- ⓪' 描边 ----------
+const WHITE = PALETTE.findIndex(p => p.code === 'H2');   // #FFFFFF
+const GREY  = PALETTE.findIndex(p => p.code === 'H5');   // #464648
+
+t('描边：明暗交界处在较暗的一侧压深色，亮侧不动', () => {
+  // 4×2：左两列深灰、右两列白
+  const g = new Int16Array([GREY, GREY, WHITE, WHITE, GREY, GREY, WHITE, WHITE]);
+  const o = outline(g, 4, 2, 2);
+  assert.equal(o[1], OUTLINE_IDX, '深灰那格贴着白，应被描边');
+  assert.equal(o[0], GREY, '深灰内部不该被描边');
+  assert.equal(o[2], WHITE, '白的那侧不该被描边');
+});
+
+t('描边：level 0 完全不改；对比不够时不描', () => {
+  const g = new Int16Array([GREY, GREY, WHITE, WHITE, GREY, GREY, WHITE, WHITE]);
+  assert.deepEqual([...outline(g, 4, 2, 0)], [...g]);
+  // 两个亮度接近的浅色之间不该出现黑边
+  const L1 = PALETTE.findIndex(p => p.code === 'H9'), L2 = PALETTE.findIndex(p => p.code === 'H10');
+  const g2 = new Int16Array([L1, L1, L2, L2, L1, L1, L2, L2]);
+  assert.deepEqual([...outline(g2, 4, 2, 1)], [...g2]);
+});
+
+t('描边在最深一级可以正常触发', () => {
+  const g = new Int16Array([GREY, GREY, WHITE, WHITE, GREY, GREY, WHITE, WHITE]);
+  assert.equal(outline(g, 4, 2, 3)[1], OUTLINE_IDX);
 });
 
 console.log(`\n${n} 项通过`);
