@@ -23,6 +23,10 @@ button:hover{filter:brightness(.95)}
 #stat{margin-top:14px;font-size:12px;color:#555;white-space:pre-line;border-top:1px solid #eee;padding-top:10px}
 #stage{flex:1;overflow:auto;padding:22px}
 canvas{background:#fff;box-shadow:0 1px 8px rgba(0,0,0,.14);display:block}
+#px{image-rendering:pixelated;margin-bottom:30px;max-width:100%;height:auto}
+#cv{margin-bottom:26px}
+.cap{font-size:14px;margin:0 0 10px;color:#222}
+.cap span{font-weight:400;font-size:12px;color:#999;margin-left:8px}
 /* 手机：控制栏挪到上方，图纸区铺满整屏 */
 @media (max-width:820px){
   body{flex-direction:column}
@@ -45,6 +49,8 @@ canvas{background:#fff;box-shadow:0 1px 8px rgba(0,0,0,.14);display:block}
   </div>
   <label>最多用几种颜色</label>
   <input type="number" id="mc" value="24" min="2" max="295">
+  <label>降噪强度（去孤立杂色豆）</label>
+  <input type="number" id="ds" value="2" min="0" max="3">
   <div class="chk"><input type="checkbox" id="dither"><label for="dither" style="margin:0">抖动（渐变更细腻，色块更碎）</label></div>
   <div class="chk"><input type="checkbox" id="codes" checked><label for="codes" style="margin:0">显示色号</label></div>
   <label>预览单格像素</label>
@@ -54,7 +60,12 @@ canvas{background:#fff;box-shadow:0 1px 8px rgba(0,0,0,.14);display:block}
   <button id="csv">导出色号清单 CSV</button>
   <div id="stat">等待图片…</div>
 </aside>
-<section id="stage"><canvas id="cv"></canvas></section>
+<section id="stage">
+  <h2 class="cap">① 像素图 <span>先看像不像原图</span></h2>
+  <canvas id="px"></canvas>
+  <h2 class="cap">② 拼豆图纸 <span>带网格与色号，可导出</span></h2>
+  <canvas id="cv"></canvas>
+</section>
 
 <script id="core">
 // 核心算法：色卡 + 图片量化。纯函数，不碰 DOM（test.mjs 会单独跑它）。
@@ -75,7 +86,59 @@ function nearest(r,g,b,cands){
   return best;
 }
 
-// 先全色卡最近邻，再按使用频次砍到 maxColors，把被砍掉的像素重映射到留下的颜色上
+// ① 像素化：每格取「区域内出现最多的颜色」而不是平均值 —— 边界锐利、细节不糊
+//    src 是高分辨率原图(w*h 由 sw*sh 个源像素归并而来)，返回 w*h 的像素图
+function pixelate(src,sw,sh,w,h){
+  const out=new Uint8ClampedArray(w*h*4);
+  for(let y=0;y<h;y++){
+    const y0=Math.floor(y*sh/h), y1=Math.min(sh,Math.max(y0+1,Math.floor((y+1)*sh/h)));
+    for(let x=0;x<w;x++){
+      const x0=Math.floor(x*sw/w), x1=Math.min(sw,Math.max(x0+1,Math.floor((x+1)*sw/w)));
+      const bins=new Map();           // 4bit/通道 的粗直方图
+      let opaque=0,total=0;
+      for(let sy=y0;sy<y1;sy++) for(let sx=x0;sx<x1;sx++){
+        const j=(sy*sw+sx)*4; total++;
+        if(src[j+3]<128) continue;
+        opaque++;
+        const k=((src[j]>>4)<<8)|((src[j+1]>>4)<<4)|(src[j+2]>>4);
+        let b=bins.get(k); if(!b){b=[0,0,0,0];bins.set(k,b);}
+        b[0]++; b[1]+=src[j]; b[2]+=src[j+1]; b[3]+=src[j+2];
+      }
+      const o=(y*w+x)*4;
+      if(!bins.size || opaque*2<total){ out[o+3]=0; continue; }   // 过半透明 → 留空
+      let best=null;
+      for(const b of bins.values()) if(!best||b[0]>best[0]) best=b;
+      out[o]=best[1]/best[0]; out[o+1]=best[2]/best[0]; out[o+2]=best[3]/best[0]; out[o+3]=255;
+    }
+  }
+  return out;
+}
+
+// ② 降噪：同色邻居太少的「孤豆」换成周围最多的颜色。strength=0关 1只删全孤立 2删≤1邻居 3删≤2邻居
+function despeckle(idx,w,h,strength){
+  if(!strength) return idx;
+  const out=idx.slice();
+  for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+    const i=y*w+x, c=idx[i];
+    if(c<0) continue;
+    const tally=new Map(); let same=0,votes=0;
+    for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+      if(!dx&&!dy) continue;
+      const nx=x+dx, ny=y+dy;
+      if(nx<0||nx>=w||ny<0||ny>=h) continue;
+      const n=idx[ny*w+nx]; if(n<0) continue;
+      votes++; tally.set(n,(tally.get(n)||0)+1);
+      if(n===c) same++;
+    }
+    if(same>=strength || !votes) continue;
+    let best=null,bc=0;
+    for(const [k,v] of tally) if(v>bc){bc=v;best=k;}
+    if(best!==null && best!==c && bc>=3) out[i]=best;
+  }
+  return out;
+}
+
+// ③ 上色号：先全色卡最近邻，再按使用频次砍到 maxColors，把被砍掉的像素重映射到留下的颜色上
 function quantize(src,w,h,opt={}){
   const maxColors = Math.min(Math.max(opt.maxColors||24,2),PALETTE.length);
   const n=w*h, px=src;
@@ -98,6 +161,7 @@ function quantize(src,w,h,opt={}){
     }
   }
   if(opt.dither) idx=dither(px,w,h,cands);
+  if(opt.despeckle) idx=despeckle(idx,w,h,opt.despeckle);
 
   const used=new Map();
   for(const c of idx) if(c>=0) used.set(c,(used.get(c)||0)+1);
@@ -123,7 +187,7 @@ function dither(px,w,h,cands){
 }
 
 function lum(hex){const [r,g,b]=hexRgb(hex); return (0.299*r+0.587*g+0.114*b);}
-if (typeof globalThis!=='undefined') globalThis.PDCore={MARD,PALETTE,quantize,nearest,hexRgb,lum};
+if (typeof globalThis!=='undefined') globalThis.PDCore={MARD,PALETTE,quantize,pixelate,despeckle,nearest,hexRgb,lum};
 </script>
 
 <script>
@@ -164,23 +228,42 @@ function sample(W,H){
   return c.getImageData(0,0,W,H).data;
 }
 
-// ---------- 生成 ----------
+// ---------- 生成：图片 → ①像素图 → ②拼豆图纸 ----------
 let timer=null;
 const kick = () => { clearTimeout(timer); timer=setTimeout(build,120); };
-['#w','#mc','#cell','#dither','#codes'].forEach(s => $(s).oninput = kick);
+['#w','#mc','#ds','#cell','#dither','#codes'].forEach(s => $(s).oninput = kick);
 $('#w').oninput = () => { fitHeight(); kick(); };
 
 function build(){
   if(!img) return;
   const w=Math.min(300,Math.max(4,+$('#w').value||58));
   const h=Math.min(300,Math.max(4,+$('#h').value||58));
-  res = core.quantize(sample(w,h), w, h, {
+  // 原图先保留足够多的采样点（每颗豆最多 16×16 个源像素），供主色统计用
+  const k=Math.max(1,Math.min(16,1200/w,1200/h));
+  const sw=Math.max(w,Math.round(w*k)), sh=Math.max(h,Math.round(h*k));
+  const pix = core.pixelate(sample(sw,sh), sw, sh, w, h);        // ① 像素图
+  res = core.quantize(pix, w, h, {                               // ② 上色号
     maxColors:+$('#mc').value||24,
-    dither:$('#dither').checked
+    dither:$('#dither').checked,
+    despeckle:Math.min(3,Math.max(0,+$('#ds').value||0))
   });
+  drawPixel();
   draw();
   $('#stat').textContent =
-    `尺寸  ${w} × ${h} 豆\n用色  ${res.colors.length} 种\n总豆数  ${res.total} 颗`;
+    `尺寸  ${w} × ${h} 豆\n用色  ${res.colors.length} 种\n总豆数  ${res.total} 颗\n采样  ${sw} × ${sh} px`;
+}
+
+// ① 像素图：无网格无编号，只判断「像不像」
+function drawPixel(){
+  const cv=$('#px'), {w,h,idx,colors}=res;
+  const scale=Math.max(3,Math.min(14,Math.floor(820/w)));
+  cv.width=w*scale; cv.height=h*scale;
+  const g=cv.getContext('2d'), byIdx=new Map(colors.map(c=>[c.i,c]));
+  for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+    const c=byIdx.get(idx[y*w+x]);
+    g.fillStyle = c ? c.hex : '#fff';
+    g.fillRect(x*scale,y*scale,scale,scale);
+  }
 }
 
 // ---------- 画图 ----------

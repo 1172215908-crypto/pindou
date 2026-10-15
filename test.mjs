@@ -7,7 +7,7 @@ const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 const core = html.match(/<script id="core">([\s\S]*?)<\/script>/)?.[1];
 assert.ok(core, '找不到 core 脚本');
 const ctx = {}; vm.createContext(ctx); vm.runInContext(core, ctx);
-const { MARD, PALETTE, quantize, nearest, hexRgb } = ctx.PDCore;
+const { MARD, PALETTE, quantize, pixelate, despeckle, nearest, hexRgb } = ctx.PDCore;
 
 let n = 0;
 const t = (name, fn) => { fn(); console.log('  ok  ' + name); n++; };
@@ -74,6 +74,56 @@ t('抖动的非空像素数不变、颜色不越界', () => {
   const r = quantize(quadPx, 8, 8, { maxColors: 3, dither: true });
   assert.ok(r.colors.length <= 3);
   assert.equal(r.total, 64);
+});
+
+// ---------- ① 像素化：取主色，而不是平均值 ----------
+t('像素化取区域内主色，不产生平均出来的“脏色”', () => {
+  const src = new Uint8ClampedArray(4 * 4);            // 4 个源像素 → 1 格
+  const put = (i, r, g, b) => { src[i * 4] = r; src[i * 4 + 1] = g; src[i * 4 + 2] = b; src[i * 4 + 3] = 255; };
+  put(0, 255, 0, 0); put(1, 255, 0, 0); put(2, 255, 0, 0); put(3, 0, 0, 255);
+  const out = pixelate(src, 4, 1, 1, 1);
+  assert.deepEqual([out[0], out[1], out[2], out[3]], [255, 0, 0, 255]);  // 平均会得到 (191,0,64)
+});
+
+t('像素化：过半透明则留空', () => {
+  const src = new Uint8ClampedArray(4 * 4);
+  src[3] = 255;                                        // 只 1/4 不透明
+  for (let i = 1; i < 4; i++) { src[i * 4] = 10; src[i * 4 + 3] = 0; }
+  assert.equal(pixelate(src, 4, 1, 1, 1)[3], 0);
+});
+
+// ---------- ② 降噪：去孤立杂色豆 ----------
+const grid = (w, h, fill, patches = []) => {
+  const a = new Int16Array(w * h).fill(fill);
+  for (const [x, y, v] of patches) a[y * w + x] = v;
+  return a;
+};
+
+t('降噪：孤立的单颗豆被周围颜色吃掉', () => {
+  const g = grid(5, 5, 10, [[2, 2, 20]]);
+  assert.equal(despeckle(g, 5, 5, 1)[12], 10);
+  assert.equal(despeckle(g, 5, 5, 0)[12], 20, 'strength=0 应完全不改');
+});
+
+t('降噪：成片的色块不动（3×3 色块在强度 3 下仍保留）', () => {
+  const patches = [];
+  for (let y = 2; y <= 4; y++) for (let x = 2; x <= 4; x++) patches.push([x, y, 20]);
+  const g = grid(7, 7, 10, patches);
+  const out = despeckle(g, 7, 7, 3);
+  assert.equal(out[16], 20, '色块角上那格应保留');   // (2,2)
+  assert.equal(out[24], 20, '色块中心应保留');       // (3,3)
+});
+
+t('降噪：强度越大删得越多（1×2 的小岛）', () => {
+  const g = grid(5, 5, 10, [[1, 1, 20], [2, 1, 20]]);
+  assert.equal(despeckle(g, 5, 5, 1)[6], 20, '强度1：保留 2 颗的小岛');
+  assert.equal(despeckle(g, 5, 5, 2)[6], 10, '强度2：吃掉 2 颗的小岛');
+});
+
+t('降噪不改变非空像素数量', () => {
+  const r = quantize(quadPx, 8, 8, { maxColors: 4, despeckle: 2 });
+  assert.equal(r.total, 64);
+  assert.ok(r.colors.every(c => c.count > 0));
 });
 
 console.log(`\n${n} 项通过`);
