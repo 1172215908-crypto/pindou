@@ -99,6 +99,29 @@ const grid = (w, h, fill, patches = []) => {
   return a;
 };
 
+// ---------- 细节优先：小面积但鲜明的特征要能压过占多数的底色 ----------
+t('细节优先：detail=0 取占比多数色，detail=5 保下小面积特征色', () => {
+  // 8×8 一格：52 个浅灰 + 12 个深色（模拟一条 19% 占比的嘴线/轮廓线）
+  const src = new Uint8ClampedArray(8 * 8 * 4);
+  for (let i = 0; i < 64; i++) {
+    const dark = i >= 26 && i < 38;
+    const j = i * 4, v = dark ? 20 : 230;
+    src[j] = v; src[j + 1] = v; src[j + 2] = v; src[j + 3] = 255;
+  }
+  const a = pixelate(src, 8, 8, 1, 1, { detail: 0 });
+  const b = pixelate(src, 8, 8, 1, 1, { detail: 5 });
+  assert.ok(a[0] > 200, 'detail=0 应取占多数的浅色，实际 ' + a[0]);
+  assert.ok(b[0] < 60, 'detail=5 应保下深色特征，实际 ' + b[0]);
+});
+
+t('细节优先：平坦区域不受影响（不会把噪声放大成杂色）', () => {
+  // 全部同一颜色，只有一个 bin → 无论 detail 多大都应是该色
+  const src = new Uint8ClampedArray(8 * 8 * 4);
+  for (let i = 0; i < 64; i++) { const j = i * 4; src[j] = 90; src[j + 1] = 140; src[j + 2] = 200; src[j + 3] = 255; }
+  const o = pixelate(src, 8, 8, 1, 1, { detail: 5 });
+  assert.deepEqual([o[0], o[1], o[2]], [90, 140, 200]);
+});
+
 t('降噪：孤立的单颗豆被周围颜色吃掉', () => {
   const g = grid(5, 5, 10, [[2, 2, 20]]);
   assert.equal(despeckle(g, 5, 5, 1)[12], 10);
