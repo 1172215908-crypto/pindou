@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>拼豆图纸生成器 · MARD</title>
+<style>
+:root{--bd:#dcdcdc;--bg:#f4f4f2;--ink:#222}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.55 -apple-system,"PingFang SC","Helvetica Neue",sans-serif;color:var(--ink);background:var(--bg);display:flex;min-height:100vh}
+#panel{width:268px;flex:none;padding:16px;background:#fff;border-right:1px solid var(--bd);overflow:auto}
+#panel h1{font-size:16px;margin:0 0 2px}
+#panel .hint{color:#999;font-size:12px;margin:0 0 14px}
+label{display:block;margin:12px 0 4px;font-size:12px;color:#555}
+input[type=number]{width:100%;padding:6px 8px;border:1px solid var(--bd);border-radius:6px;font:inherit;background:#fff}
+.row{display:flex;gap:8px}
+.chk{display:flex;align-items:center;gap:6px;margin:10px 0;font-size:13px;color:#333}
+button{width:100%;padding:9px;margin-top:10px;border:1px solid var(--bd);border-radius:6px;background:#fff;font:inherit;cursor:pointer}
+button.primary{background:#222;color:#fff;border-color:#222}
+button:hover{filter:brightness(.95)}
+#drop{border:2px dashed var(--bd);border-radius:8px;padding:16px 12px;text-align:center;color:#999;font-size:12px;cursor:pointer}
+#drop.on{border-color:#222;color:#222;background:#fafafa}
+#stat{margin-top:14px;font-size:12px;color:#555;white-space:pre-line;border-top:1px solid #eee;padding-top:10px}
+#stage{flex:1;overflow:auto;padding:22px}
+canvas{background:#fff;box-shadow:0 1px 8px rgba(0,0,0,.14);display:block}
+/* 手机：控制栏挪到上方，图纸区铺满整屏 */
+@media (max-width:820px){
+  body{flex-direction:column}
+  #panel{width:100%;border-right:0;border-bottom:1px solid var(--bd)}
+  #stage{padding:12px}
+}
+</style>
+</head>
+<body>
+<aside id="panel">
+  <h1>拼豆图纸生成器</h1>
+  <p class="hint">上传图片 → 自动转成带色号的拼豆图纸</p>
+
+  <div id="drop">点击选择图片<br>或拖拽 / 直接粘贴截图</div>
+  <input type="file" id="file" accept="image/*" hidden>
+
+  <div class="row">
+    <div><label>宽（豆）</label><input type="number" id="w" value="58" min="4" max="300"></div>
+    <div><label>高（豆）</label><input type="number" id="h" value="58" min="4" max="300"></div>
+  </div>
+  <label>最多用几种颜色</label>
+  <input type="number" id="mc" value="24" min="2" max="295">
+  <div class="chk"><input type="checkbox" id="dither"><label for="dither" style="margin:0">抖动（渐变更细腻，色块更碎）</label></div>
+  <div class="chk"><input type="checkbox" id="codes" checked><label for="codes" style="margin:0">显示色号</label></div>
+  <label>预览单格像素</label>
+  <input type="number" id="cell" value="14" min="6" max="40">
+
+  <button class="primary" id="png">导出图纸 PNG</button>
+  <button id="csv">导出色号清单 CSV</button>
+  <div id="stat">等待图片…</div>
+</aside>
+<section id="stage"><canvas id="cv"></canvas></section>
+
+<script id="core">
+// 核心算法：色卡 + 图片量化。纯函数，不碰 DOM（test.mjs 会单独跑它）。
+const MARD = [["A1","#FAF5CD"],["A2","#FCFED6"],["A3","#FCFF92"],["A4","#F7EC5C"],["A5","#FFE44B"],["A6","#FDA951"],["A7","#FA8C4F"],["A8","#F9E045"],["A9","#F99C5F"],["A10","#F47E36"],["A11","#FEDB99"],["A12","#FDA276"],["A13","#FEC667"],["A14","#F85842"],["A15","#FBF65E"],["A16","#FEFF97"],["A17","#FDE173"],["A18","#FCBF80"],["A19","#FD7E77"],["A20","#F9D66E"],["A21","#FAE393"],["A22","#EDF878"],["A23","#E1C9BD"],["A24","#F3F6A9"],["A25","#FFD785"],["A26","#FEC832"],["B1","#DFF139"],["B2","#64F343"],["B3","#9FF685"],["B4","#5FDF34"],["B5","#39E158"],["B6","#64E0A4"],["B7","#3FAE7C"],["B8","#1D9E54"],["B9","#2A5037"],["B10","#9AD1BA"],["B11","#627032"],["B12","#1A6E3D"],["B13","#C8E87D"],["B14","#ACE84C"],["B15","#305335"],["B16","#C0ED9C"],["B17","#9EB33E"],["B18","#E6ED4F"],["B19","#26B78E"],["B20","#CAEDCF"],["B21","#176268"],["B22","#0A4241"],["B23","#343B1A"],["B24","#E8FAA6"],["B25","#4E846D"],["B26","#907C35"],["B27","#D0E0AF"],["B28","#9EE5BB"],["B29","#C6DF5F"],["B30","#E3FBB1"],["B31","#B2E694"],["B32","#92AD60"],["C1","#FFFEE4"],["C2","#ABF8FE"],["C3","#9EE0F8"],["C4","#44CDFB"],["C5","#06ABE3"],["C6","#54A7E9"],["C7","#3977CC"],["C8","#0F52BD"],["C9","#3349C3"],["C10","#3DBBE3"],["C11","#2ADED3"],["C12","#1E334E"],["C13","#CDE7FE"],["C14","#D6FDFC"],["C15","#21C5C4"],["C16","#1858A2"],["C17","#02D1F3"],["C18","#213244"],["C19","#188690"],["C20","#1A70A9"],["C21","#BEDDFC"],["C22","#6BB1BB"],["C23","#C8E2F9"],["C24","#7EC5F9"],["C25","#A9E8E0"],["C26","#42ADD1"],["C27","#D0DEEF"],["C28","#BDCEED"],["C29","#364A89"],["D1","#ACB7EF"],["D2","#868DD3"],["D3","#3653AF"],["D4","#162C7E"],["D5","#B34EC6"],["D6","#B37BDC"],["D7","#8758A9"],["D8","#E3D2FE"],["D9","#D6BAF5"],["D10","#301A49"],["D11","#BCBAE2"],["D12","#DC99CE"],["D13","#B5038F"],["D14","#882893"],["D15","#2F1E8E"],["D16","#E2E4F0"],["D17","#C7D3F9"],["D18","#9A64B8"],["D19","#D8C2D9"],["D20","#9C34AD"],["D21","#940595"],["D22","#383995"],["D23","#FADBF8"],["D24","#768AE1"],["D25","#4950C2"],["D26","#D6C6EB"],["E1","#F6D4CB"],["E2","#FCC1DD"],["E3","#F6BDE8"],["E4","#E9639E"],["E5","#F1559F"],["E6","#EC4072"],["E7","#C63674"],["E8","#FDDBE9"],["E9","#E575C7"],["E10","#D33997"],["E11","#F7DAD4"],["E12","#F893BF"],["E13","#B5026A"],["E14","#FAD4BF"],["E15","#F5C9CA"],["E16","#FBF4EC"],["E17","#F7E3EC"],["E18","#FBCBDB"],["E19","#F6BBD1"],["E20","#D7C6CE"],["E21","#C09DA4"],["E22","#B58B9F"],["E23","#937D8A"],["E24","#DEBEE5"],["F1","#FF9280"],["F2","#F73D48"],["F3","#EF4D3E"],["F4","#F92B40"],["F5","#E30328"],["F6","#913635"],["F7","#911932"],["F8","#BB0126"],["F9","#E0677A"],["F10","#874628"],["F11","#6F321D"],["F12","#F8516D"],["F13","#F45C45"],["F14","#FCADB2"],["F15","#D50527"],["F16","#F8C0A9"],["F17","#E89B7D"],["F18","#D07E4A"],["F19","#BE454A"],["F20","#C69495"],["F21","#F2BBC6"],["F22","#F7C3D0"],["F23","#EC806D"],["F24","#E09DAF"],["F25","#E84854"],["G1","#FFE4D3"],["G2","#FCC6AC"],["G3","#F1C4A5"],["G4","#DCB387"],["G5","#E7B34E"],["G6","#F3A014"],["G7","#98503A"],["G8","#4B2B1C"],["G9","#E4B685"],["G10","#DA8C42"],["G11","#DAC898"],["G12","#FEC993"],["G13","#B2714B"],["G14","#8B684C"],["G15","#F6F8E3"],["G16","#F2D8C1"],["G17","#79544E"],["G18","#FFE4D6"],["G19","#DD7D41"],["G20","#A5452F"],["G21","#B38561"],["H1","#FBFBFB"],["H2","#FFFFFF"],["H3","#B4B4B4"],["H4","#878787"],["H5","#464648"],["H6","#2C2C2C"],["H7","#010101"],["H8","#E7D6DC"],["H9","#EFEDEE"],["H10","#ECEAEB"],["H11","#CDCDCD"],["H12","#FDF6EE"],["H13","#F4EFD1"],["H14","#CED7D4"],["H15","#98A6A6"],["H16","#1B1213"],["H17","#F0EEEF"],["H18","#FCFFF8"],["H19","#F2EEE5"],["H20","#96A09F"],["H21","#F8FBE6"],["H22","#CACADA"],["H23","#9B9C94"],["M1","#BBC6B6"],["M2","#909994"],["M3","#697E80"],["M4","#E0D4BC"],["M5","#D0CBAE"],["M6","#B0AA86"],["M7","#B0A796"],["M8","#AE8082"],["M9","#A88764"],["M10","#C6B2BB"],["M11","#9D7693"],["M12","#644B51"],["M13","#C79266"],["M14","#C37463"],["M15","#747D7A"],["P1","#F9F9F9"],["P2","#ABABAB"],["P3","#B6DBAF"],["P4","#FEA2A3"],["P5","#EB903F"],["P6","#63CEA2"],["P7","#E79273"],["P8","#ECDB59"],["P9","#DBD9DA"],["P10","#DBC7EA"],["P11","#F1E9D4"],["P12","#E9EDEE"],["P13","#ADCBF1"],["P14","#337BAD"],["P15","#668575"],["P16","#FDC24E"],["P17","#FDA42E"],["P18","#FEBDA7"],["P19","#FFDEE9"],["P20","#FCBFD1"],["P21","#E8BEC2"],["P22","#DFAAA4"],["P23","#A3656A"],["Q1","#F2A5E8"],["Q2","#E9EC91"],["Q3","#FFFF00"],["Q4","#FFEBFA"],["Q5","#76CEDE"],["R1","#D40E1F"],["R2","#F13484"],["R3","#FB852B"],["R4","#F8ED33"],["R5","#32C958"],["R6","#1EBA93"],["R7","#1D779C"],["R8","#1960C8"],["R9","#945AB1"],["R10","#F8DA54"],["R11","#FCECF7"],["R12","#D8D4D3"],["R13","#56534E"],["R14","#A3E7DC"],["R15","#78CEE7"],["R16","#3FCDCE"],["R17","#4E8379"],["R18","#7DCA9C"],["R19","#C8E664"],["R20","#E3CCBA"],["R21","#A17140"],["R22","#6B372C"],["R23","#F6BB6F"],["R24","#F3C6C0"],["R25","#C76A62"],["R26","#D093BC"],["R27","#E58EAE"],["R28","#9F85CF"],["T1","#FCFDFF"],["Y1","#FF6FB7"],["Y2","#FDB583"],["Y3","#D8FCA4"],["Y4","#91DAFB"],["Y5","#E987EA"],["Y6","#F7D4B8"],["Y7","#F1FA7D"],["Y8","#5EE88C"],["Y9","#F8F5FE"],["ZG1","#DAABB3"],["ZG2","#D6AA87"],["ZG3","#C1BD8D"],["ZG4","#96B69F"],["ZG5","#849DC6"],["ZG6","#94BFE2"],["ZG7","#E2A9D2"],["ZG8","#AB91C0"]];
+
+function hexRgb(h){return [parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];}
+const PALETTE = MARD.map(([code,hex])=>{const [r,g,b]=hexRgb(hex);return {code,hex,r,g,b};});
+const ALL = PALETTE.map((_,i)=>i);
+
+// redmean 加权距离：比裸欧氏更接近人眼，一行代价
+function dist(r,g,b,p){
+  const rm=(r+p.r)/2, dr=r-p.r, dg=g-p.g, db=b-p.b;
+  return (2+rm/256)*dr*dr + 4*dg*dg + (2+(255-rm)/256)*db*db;
+}
+function nearest(r,g,b,cands){
+  let best=-1, bd=Infinity;
+  for(const i of cands){const d=dist(r,g,b,PALETTE[i]); if(d<bd){bd=d;best=i;}}
+  return best;
+}
+
+// 先全色卡最近邻，再按使用频次砍到 maxColors，把被砍掉的像素重映射到留下的颜色上
+function quantize(src,w,h,opt={}){
+  const maxColors = Math.min(Math.max(opt.maxColors||24,2),PALETTE.length);
+  const n=w*h, px=src;
+  let idx=new Int16Array(n);
+  for(let i=0;i<n;i++) idx[i] = px[i*4+3]<128 ? -1 : nearest(px[i*4],px[i*4+1],px[i*4+2],ALL);
+
+  let cands=ALL;
+  for(let pass=0;pass<8;pass++){
+    const cnt=new Map();
+    for(const c of idx) if(c>=0) cnt.set(c,(cnt.get(c)||0)+1);
+    if(cnt.size<=maxColors) break;
+    cands=[...cnt].sort((a,b)=>b[1]-a[1]).slice(0,maxColors).map(e=>e[0]);
+    const keep=new Set(cands), memo=new Map();
+    for(let i=0;i<n;i++){
+      const c=idx[i];
+      if(c<0||keep.has(c)) continue;
+      let t=memo.get(c);
+      if(t===undefined){t=nearest(px[i*4],px[i*4+1],px[i*4+2],cands); memo.set(c,t);}
+      idx[i]=t;
+    }
+  }
+  if(opt.dither) idx=dither(px,w,h,cands);
+
+  const used=new Map();
+  for(const c of idx) if(c>=0) used.set(c,(used.get(c)||0)+1);
+  const colors=[...used].sort((a,b)=>b[1]-a[1]).map(([i,count])=>({i,...PALETTE[i],count}));
+  return {w,h,idx,colors,total:colors.reduce((s,c)=>s+c.count,0)};
+}
+
+// Floyd–Steinberg，在已定的候选色上做，保证不会溢出候选集
+function dither(px,w,h,cands){
+  const buf=Float32Array.from(px), out=new Int16Array(w*h);
+  const add=(x,y,f)=>{if(x<0||x>=w||y>=h) return; const j=(y*w+x)*4;
+    buf[j]+=er*f; buf[j+1]+=eg*f; buf[j+2]+=eb*f;};
+  let er=0,eg=0,eb=0;
+  for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+    const i=y*w+x;
+    if(px[i*4+3]<128){out[i]=-1; continue;}
+    const r=buf[i*4],g=buf[i*4+1],b=buf[i*4+2];
+    const p=nearest(r,g,b,cands); out[i]=p;
+    er=r-PALETTE[p].r; eg=g-PALETTE[p].g; eb=b-PALETTE[p].b;
+    add(x+1,y,7/16); add(x-1,y+1,3/16); add(x,y+1,5/16); add(x+1,y+1,1/16);
+  }
+  return out;
+}
+
+function lum(hex){const [r,g,b]=hexRgb(hex); return (0.299*r+0.587*g+0.114*b);}
+if (typeof globalThis!=='undefined') globalThis.PDCore={MARD,PALETTE,quantize,nearest,hexRgb,lum};
+</script>
+
+<script>
+const $ = s => document.querySelector(s);
+const core = globalThis.PDCore;
+let img = null, res = null;
+
+// ---------- 输入 ----------
+$('#drop').onclick = () => $('#file').click();
+$('#file').onchange = e => e.target.files[0] && load(e.target.files[0]);
+['dragenter','dragover'].forEach(t => $('#drop').addEventListener(t, e => {e.preventDefault(); $('#drop').classList.add('on');}));
+['dragleave','drop'].forEach(t => $('#drop').addEventListener(t, e => {e.preventDefault(); $('#drop').classList.remove('on');}));
+$('#drop').addEventListener('drop', e => e.dataTransfer.files[0] && load(e.dataTransfer.files[0]));
+document.addEventListener('paste', e => {
+  const f=[...(e.clipboardData?.items||[])].find(i=>i.type.startsWith('image/'))?.getAsFile();
+  if(f) load(f);
+});
+
+function load(file){
+  const url=URL.createObjectURL(file), im=new Image();
+  im.onload=()=>{ URL.revokeObjectURL(url); img=im; fitHeight(); build(); };
+  im.src=url;
+}
+const fitHeight = () => { if(img) $('#h').value=Math.max(4,Math.round(+$('#w').value*img.height/img.width)); };
+
+// 多级等比缩小，比一次性 drawImage 抗锯齿好
+function sample(W,H){
+  let src=img, cw=img.width, ch=img.height;
+  while(cw>W*2 && ch>H*2){
+    cw=Math.max(W,Math.round(cw/2)); ch=Math.max(H,Math.round(ch/2));
+    const t=document.createElement('canvas'); t.width=cw; t.height=ch;
+    const c=t.getContext('2d'); c.imageSmoothingQuality='high'; c.drawImage(src,0,0,cw,ch);
+    src=t;
+  }
+  const o=document.createElement('canvas'); o.width=W; o.height=H;
+  const c=o.getContext('2d',{willReadFrequently:true});
+  c.imageSmoothingQuality='high'; c.drawImage(src,0,0,W,H);
+  return c.getImageData(0,0,W,H).data;
+}
+
+// ---------- 生成 ----------
+let timer=null;
+const kick = () => { clearTimeout(timer); timer=setTimeout(build,120); };
+['#w','#mc','#cell','#dither','#codes'].forEach(s => $(s).oninput = kick);
+$('#w').oninput = () => { fitHeight(); kick(); };
+
+function build(){
+  if(!img) return;
+  const w=Math.min(300,Math.max(4,+$('#w').value||58));
+  const h=Math.min(300,Math.max(4,+$('#h').value||58));
+  res = core.quantize(sample(w,h), w, h, {
+    maxColors:+$('#mc').value||24,
+    dither:$('#dither').checked
+  });
+  draw();
+  $('#stat').textContent =
+    `尺寸  ${w} × ${h} 豆\n用色  ${res.colors.length} 种\n总豆数  ${res.total} 颗`;
+}
+
+// ---------- 画图 ----------
+function draw(cell, canvas){
+  const cv = canvas || $('#cv');
+  cell = cell || +$('#cell').value || 14;
+  const {w,h,idx,colors} = res;
+  const byIdx = new Map(colors.map(c=>[c.i,c]));
+  const F = 'px -apple-system,"PingFang SC","Helvetica Neue",sans-serif';
+  const mono = 'px ui-monospace,Menlo,Consolas,monospace';
+
+  const ruler = Math.round(cell*1.5) + 6;
+  const gridW = w*cell, gridH = h*cell;
+  const itemW = Math.max(cell*2.6, 58), itemH = Math.max(cell*2.6, 56);
+  const perRow = Math.max(1, Math.floor(gridW/itemW));
+  const rows = Math.ceil(colors.length/perRow);
+  const legendH = colors.length ? rows*itemH + 26 : 0;
+  const pad = Math.round(cell*0.8), titleH = Math.round(cell*2.4)+8;
+
+  const W = ruler*2 + gridW + pad*2;
+  const H = titleH + ruler*2 + gridH + pad*2 + legendH;
+  cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  g.fillStyle='#fff'; g.fillRect(0,0,W,H);
+
+  const ox = ruler+pad, oy = titleH+ruler+pad;
+
+  // 标题
+  g.fillStyle='#111'; g.textAlign='left'; g.textBaseline='top';
+  g.font = `600 ${Math.round(cell*0.95)}${F}`;
+  g.fillText(`拼豆图纸 · 品牌 MARD`, ox, pad*0.4);
+  g.fillStyle='#666'; g.font = `${Math.round(cell*0.72)}${F}`;
+  g.textAlign='right';
+  g.fillText(`${w} × ${h} 豆 · ${colors.length} 色 · 共 ${res.total} 颗`, ox+gridW, pad*0.4+cell*0.3);
+
+  // 格子
+  for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+    const c = byIdx.get(idx[y*w+x]);
+    const px = ox+x*cell, py = oy+y*cell;
+    g.fillStyle = c ? c.hex : '#f7f7f7';
+    g.fillRect(px,py,cell,cell);
+  }
+
+  // 网格线：每格浅虚线，每 10 格深线，外框黑
+  g.lineWidth=1;
+  g.strokeStyle='#d0d0d0'; g.setLineDash([2,2]); g.beginPath();
+  for(let x=1;x<w;x++) if(x%10){ g.moveTo(ox+x*cell+.5,oy); g.lineTo(ox+x*cell+.5,oy+gridH); }
+  for(let y=1;y<h;y++) if(y%10){ g.moveTo(ox,oy+y*cell+.5); g.lineTo(ox+gridW,oy+y*cell+.5); }
+  g.stroke(); g.setLineDash([]);
+  g.strokeStyle='#9a9a9a'; g.beginPath();
+  for(let x=10;x<w;x+=10){ g.moveTo(ox+x*cell+.5,oy); g.lineTo(ox+x*cell+.5,oy+gridH); }
+  for(let y=10;y<h;y+=10){ g.moveTo(ox,oy+y*cell+.5); g.lineTo(ox+gridW,oy+y*cell+.5); }
+  g.stroke();
+  g.strokeStyle='#111'; g.strokeRect(ox+.5,oy+.5,gridW,gridH);
+
+  // 色号
+  if($('#codes').checked && cell>=13){
+    g.font = `${Math.round(cell*0.42)}${mono}`;
+    g.textAlign='center'; g.textBaseline='middle';
+    for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+      const c = byIdx.get(idx[y*w+x]); if(!c) continue;
+      g.fillStyle = core.lum(c.hex)>150 ? '#111' : '#fff';
+      g.fillText(c.code, ox+x*cell+cell/2, oy+y*cell+cell/2+.5);
+    }
+  }
+
+  // 坐标尺
+  const step = cell>=15 ? 1 : cell>=9 ? 2 : 5;
+  g.font = `${Math.min(11,Math.max(8,Math.round(cell*0.52)))}${F}`;
+  g.fillStyle='#444'; g.textBaseline='middle';
+  for(let x=1;x<=w;x++){
+    if(x%step) continue;
+    const px=ox+(x-0.5)*cell;
+    g.textAlign='center'; g.fillText(x,px,oy-ruler/2);
+    g.fillText(x,px,oy+gridH+ruler/2);
+  }
+  g.textAlign='right';
+  for(let y=1;y<=h;y++){
+    if(y%step) continue;
+    const py=oy+(y-0.5)*cell;
+    g.fillText(y,ox-5,py); g.fillText(y,ox+gridW+ruler-5,py);
+  }
+
+  // 色号清单
+  if(colors.length){
+    const ly = oy+gridH+ruler+pad;
+    const sw = itemH*0.55;
+    colors.forEach((c,k)=>{
+      const cx = ox+(k%perRow)*itemW, cy = ly+Math.floor(k/perRow)*itemH;
+      g.fillStyle=c.hex; g.fillRect(cx,cy,itemW-12,sw);
+      g.strokeStyle='#c0c0c0'; g.strokeRect(cx+.5,cy+.5,itemW-13,sw-1);
+      g.fillStyle = core.lum(c.hex)>150 ? '#111' : '#fff';
+      g.font = `${Math.round(cell*0.5)}${mono}`;
+      g.textAlign='center'; g.textBaseline='middle';
+      g.fillText(c.code, cx+(itemW-12)/2, cy+sw/2+.5);
+      g.fillStyle='#333'; g.font = `${Math.round(cell*0.48)}${F}`;
+      g.fillText(`${c.count} 颗`, cx+(itemW-12)/2, cy+sw+cell*0.6);
+    });
+  }
+}
+
+// ---------- 导出 ----------
+const save = (blob,name) => {
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name;
+  a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+};
+$('#png').onclick = () => {
+  if(!res) return;
+  const cv=document.createElement('canvas');
+  draw(24,cv);
+  cv.toBlob(b=>save(b,`拼豆图纸_${res.w}x${res.h}.png`),'image/png');
+};
+$('#csv').onclick = () => {
+  if(!res) return;
+  const rows=[['色号','色值','数量'],...res.colors.map(c=>[c.code,c.hex,c.count]),
+    ['合计','',res.total]];
+  save(new Blob(['\ufeff'+rows.map(r=>r.join(',')).join('\n')],{type:'text/csv;charset=utf-8'}),
+       `拼豆色号_${res.w}x${res.h}.csv`);
+};
+</script>
+</body>
+</html>
