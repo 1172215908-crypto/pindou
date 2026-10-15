@@ -71,6 +71,18 @@ canvas{background:#fff;box-shadow:0 1px 8px rgba(0,0,0,.14);display:block}
   <input type="number" id="ol" value="0" min="0" max="3">
 
   <h3 class="sec">上色号</h3>
+  <label>色差算法（怎么判断"这个颜色最接近哪个色号"）</label>
+  <select id="algo">
+    <option value="lab" selected>CIELAB ΔE76（推荐，均衡）</option>
+    <option value="ciede2000">CIEDE2000（最准，饱和色更准）</option>
+    <option value="rgb">RGB 欧式距离（最快，原教旨）</option>
+  </select>
+  <label>稀有颜色保护（眼睛/高光/饰品 vs 脸部过渡）</label>
+  <select id="pexp">
+    <option value="2" selected>标准 —— 脸部过渡自然（推荐）</option>
+    <option value="2.5">强 —— 居中</option>
+    <option value="3">最强 —— 死保孤立特征，脸部会变平</option>
+  </select>
   <label>最多用几种颜色</label>
   <input type="number" id="mc" value="20" min="2" max="295">
   <label>降噪强度（0 关，只删真孤豆）</label>
@@ -168,16 +180,90 @@ function outline(idx,w,h,level){
   return out;
 }
 
-// 色差用 CIELAB 欧氏距离（ΔE76）。redmean 会把绿通道加权 4 倍，实测把棕发配成灰绿，所以弃用
-function dist(q,p){
+// 色差：CIEDE2000（业界标准，比 ΔE76 在饱和色区准得多）。
+// redmean 会把绿通道加权 4 倍，实测把棕发配成灰绿，所以弃用；ΔE76 在饱和蓝上偏弱。
+const RAD = Math.PI/180;
+function ciede2000(A,B){
+  const L1=A[0],a1=A[1],b1=A[2], L2=B[0],a2=B[1],b2=B[2];
+  const C1=Math.hypot(a1,b1), C2=Math.hypot(a2,b2), Cb=(C1+C2)/2;
+  const G=0.5*(1-Math.sqrt(Math.pow(Cb,7)/(Math.pow(Cb,7)+Math.pow(25,7))));
+  const a1p=(1+G)*a1, a2p=(1+G)*a2;
+  const C1p=Math.hypot(a1p,b1), C2p=Math.hypot(a2p,b2);
+  let h1p=Math.atan2(b1,a1p)/RAD; if(h1p<0) h1p+=360;
+  let h2p=Math.atan2(b2,a2p)/RAD; if(h2p<0) h2p+=360;
+  const dLp=L2-L1, dCp=C2p-C1p;
+  let dhp=0;
+  if(C1p*C2p!==0){ dhp=h2p-h1p; if(dhp>180) dhp-=360; else if(dhp<-180) dhp+=360; }
+  const dHp=2*Math.sqrt(C1p*C2p)*Math.sin(dhp*RAD/2);
+  const Lb=(L1+L2)/2, Cbp=(C1p+C2p)/2;
+  let hbp;
+  if(C1p*C2p===0) hbp=h1p+h2p;
+  else { const d=Math.abs(h1p-h2p); hbp = d<=180 ? (h1p+h2p)/2 : (h1p+h2p<360 ? (h1p+h2p+360)/2 : (h1p+h2p-360)/2); }
+  const T = 1 - 0.17*Math.cos((hbp-30)*RAD) + 0.24*Math.cos(2*hbp*RAD)
+              + 0.32*Math.cos((3*hbp+6)*RAD) - 0.20*Math.cos((4*hbp-63)*RAD);
+  const dTh = 30*Math.exp(-Math.pow((hbp-275)/25,2));
+  const RC = 2*Math.sqrt(Math.pow(Cbp,7)/(Math.pow(Cbp,7)+Math.pow(25,7)));
+  const SL = 1 + 0.015*Math.pow(Lb-50,2)/Math.sqrt(20+Math.pow(Lb-50,2));
+  const SC = 1 + 0.045*Cbp;
+  const SH = 1 + 0.015*Cbp*T;
+  const RT = -Math.sin(2*dTh*RAD)*RC;
+  return Math.sqrt(Math.pow(dLp/SL,2)+Math.pow(dCp/SC,2)+Math.pow(dHp/SH,2)+RT*(dCp/SC)*(dHp/SH));
+}
+// 色差算法可选（学自 heimitech/pindo）：rgb=纯 RGB 欧式 | lab=CIELAB ΔE76 | ciede2000
+let DIST_ALGO = 'lab';
+function setDistAlgo(a){ DIST_ALGO = a; PAL_DIST.clear(); }
+let PAL_EXP = 2;   // 选色损失 = 次数 × 距离^PAL_EXP。3 更护稀有极值色但会压平脸部中间调，实测 2 更耐看
+function setPalExp(e){ PAL_EXP = e; }
+const euc=(a,b)=>Math.sqrt((a[0]-b[0])**2+(a[1]-b[1])**2+(a[2]-b[2])**2);
+// 色卡内部两两色差（懒加载缓存）：选色阶段要反复比较
+const PAL_DIST = new Map();
+function palDist(i,j){
+  if(i===j) return 0;
+  const k = i<j ? i*512+j : j*512+i;
+  let v=PAL_DIST.get(k);
+  if(v===undefined){
+    const A=PALETTE[i], B=PALETTE[j];
+    v = DIST_ALGO==='rgb' ? euc([A.r,A.g,A.b],[B.r,B.g,B.b])
+      : DIST_ALGO==='lab' ? euc(A.lab,B.lab)
+      : ciede2000(A.lab,B.lab);
+    PAL_DIST.set(k,v);
+  }
+  return v;
+}
+// ΔE76（平方），只用来粗筛
+function de76(q,p){
   const l=PALETTE[p].lab;
   const d0=q[0]-l[0], d1=q[1]-l[1], d2=q[2]-l[2];
   return d0*d0 + d1*d1 + d2*d2;
 }
+// 最近色。CIEDE2000 先用便宜的 ΔE76 粗筛出 REFINE 个再精算，否则百万级三角函数调用会卡死页面。
+const REFINE = 12;
 function nearest(r,g,b,cands){
+  if(DIST_ALGO==='rgb'){
+    let best=cands[0], bd=Infinity;
+    for(const i of cands){const p=PALETTE[i];
+      const d=(r-p.r)**2+(g-p.g)**2+(b-p.b)**2; if(d<bd){bd=d;best=i;}}
+    return best;
+  }
   const q=srgb2lab(r,g,b);
-  let best=-1, bd=Infinity;
-  for(const i of cands){const d=dist(q,i); if(d<bd){bd=d;best=i;}}
+  if(DIST_ALGO!=='ciede2000'){
+    let best=cands[0], bd=Infinity;
+    for(const i of cands){const d=de76(q,i); if(d<bd){bd=d;best=i;}}
+    return best;
+  }
+  if(cands.length<=REFINE){
+    let best=cands[0], bd=Infinity;
+    for(const i of cands){const d=ciede2000(q,PALETTE[i].lab); if(d<bd){bd=d;best=i;}}
+    return best;
+  }
+  const top=[];
+  for(const i of cands){
+    const d=de76(q,i);
+    if(top.length<REFINE){ top.push([d,i]); top.sort((a,b)=>a[0]-b[0]); }
+    else if(d<top[REFINE-1][0]){ top[REFINE-1]=[d,i]; top.sort((a,b)=>a[0]-b[0]); }
+  }
+  let best=top[0][1], bd=Infinity;
+  for(const [,i] of top){const d=ciede2000(q,PALETTE[i].lab); if(d<bd){bd=d;best=i;}}
   return best;
 }
 
@@ -250,19 +336,18 @@ function despeckle(idx,w,h,strength){
 }
 
 // 选色：不是"按出现次数砍前 N 名"，而是**逐个删掉损失最小的那个**
-// 损失 = 出现次数 × 到最近保留色的感知距离²。
-// 稀有的蓝色瞳孔/白色高光因为离邻近色极远，损失很大 → 被保住；而大片相近的过渡色会被合并。
+// 损失 = 出现次数 × 到最近保留色的 CIEDE2000 距离**³**
+// 立方是关键：距离翻倍，保护力变 8 倍（平方只有 4 倍）。稀有的蓝色瞳孔/白色高光离邻近色极远，
+// 于是被死死保住；而大片相近的过渡色会被优先合并。这个立方指数是从 heimitech.top/pindo 的实现里学来的。
 function pickPalette(cnt,maxColors){
   let keep=[...cnt.keys()];
   if(keep.length<=maxColors) return keep;
-  const dlab=(a,b)=>{const p=PALETTE[a].lab,q=PALETTE[b].lab;
-    return (p[0]-q[0])**2+(p[1]-q[1])**2+(p[2]-q[2])**2;};
   while(keep.length>maxColors){
     let worst=-1,worstCost=Infinity;
     for(let i=0;i<keep.length;i++){
       let nd=Infinity;
-      for(let j=0;j<keep.length;j++){ if(i!==j){const d=dlab(keep[i],keep[j]); if(d<nd) nd=d;} }
-      const cost=cnt.get(keep[i])*nd;
+      for(let j=0;j<keep.length;j++){ if(i!==j){const d=palDist(keep[i],keep[j]); if(d<nd) nd=d;} }
+      const cost=cnt.get(keep[i])*Math.pow(nd,PAL_EXP);
       if(cost<worstCost){worstCost=cost;worst=i;}
     }
     keep.splice(worst,1);
@@ -320,7 +405,7 @@ function dither(px,w,h,cands){
 }
 
 function lum(hex){const [r,g,b]=hexRgb(hex); return (0.299*r+0.587*g+0.114*b);}
-if (typeof globalThis!=='undefined') globalThis.PDCore={MARD,PALETTE,OUTLINE_IDX,quantize,style,outline,pixelate,despeckle,nearest,hexRgb,lum};
+if (typeof globalThis!=='undefined') globalThis.PDCore={MARD,PALETTE,OUTLINE_IDX,setDistAlgo,setPalExp,quantize,style,outline,pixelate,despeckle,nearest,hexRgb,lum,ciede2000,srgb2lab,palDist};
 </script>
 
 <script>
@@ -364,7 +449,7 @@ function sample(W,H){
 // ---------- 生成：图片 → ①像素图 → ②拼豆图纸 ----------
 let timer=null;
 const kick = () => { clearTimeout(timer); timer=setTimeout(build,120); };
-['#w','#mc','#ds','#sat','#lv','#ol','#det','#cell','#dither','#codes'].forEach(s => $(s).oninput = kick);
+['#w','#mc','#ds','#sat','#lv','#ol','#det','#cell','#dither','#codes','#algo','#pexp'].forEach(s => $(s).oninput = kick);
 $('#w').oninput = () => { fitHeight(); kick(); };
 
 // 题材预设：一键把参数切到该题材调好的值（拿真实图对比挑出来的）
@@ -403,6 +488,8 @@ function build(){
   const pix = core.pixelate(flat, sw, sh, w, h, {                    // ① 像素画（细节优先取样）
     detail: num('#det',3,0,5)
   });
+  core.setDistAlgo($('#algo').value);
+  core.setPalExp(Number($('#pexp').value)||2);                                // 色差算法（影响选色与匹配）
   res = core.quantize(pix, w, h, {                                  // ② 上色号 + 降噪 + 描边
     maxColors: num('#mc',32,2,295),
     dither: $('#dither').checked,
@@ -469,13 +556,17 @@ function draw(cell, canvas){
     g.fillRect(px,py,cell,cell);
   }
 
-  // 网格线：每格浅虚线，每 10 格深线，外框黑
+  // 网格线三档：每格浅虚线 → 每 5 格中线 → 每 10 格深线 → 外框黑（和主流拼豆图纸一致，数格子时不容易数错）
   g.lineWidth=1;
-  g.strokeStyle='#d0d0d0'; g.setLineDash([2,2]); g.beginPath();
-  for(let x=1;x<w;x++) if(x%10){ g.moveTo(ox+x*cell+.5,oy); g.lineTo(ox+x*cell+.5,oy+gridH); }
-  for(let y=1;y<h;y++) if(y%10){ g.moveTo(ox,oy+y*cell+.5); g.lineTo(ox+gridW,oy+y*cell+.5); }
+  g.strokeStyle='#dcdcdc'; g.setLineDash([2,2]); g.beginPath();
+  for(let x=1;x<w;x++) if(x%5){ g.moveTo(ox+x*cell+.5,oy); g.lineTo(ox+x*cell+.5,oy+gridH); }
+  for(let y=1;y<h;y++) if(y%5){ g.moveTo(ox,oy+y*cell+.5); g.lineTo(ox+gridW,oy+y*cell+.5); }
   g.stroke(); g.setLineDash([]);
-  g.strokeStyle='#9a9a9a'; g.beginPath();
+  g.strokeStyle='#b0b0b0'; g.beginPath();
+  for(let x=5;x<w;x+=5){ if(x%10){ g.moveTo(ox+x*cell+.5,oy); g.lineTo(ox+x*cell+.5,oy+gridH); } }
+  for(let y=5;y<h;y+=5){ if(y%10){ g.moveTo(ox,oy+y*cell+.5); g.lineTo(ox+gridW,oy+y*cell+.5); } }
+  g.stroke();
+  g.strokeStyle='#8a8a8a'; g.beginPath();
   for(let x=10;x<w;x+=10){ g.moveTo(ox+x*cell+.5,oy); g.lineTo(ox+x*cell+.5,oy+gridH); }
   for(let y=10;y<h;y+=10){ g.moveTo(ox,oy+y*cell+.5); g.lineTo(ox+gridW,oy+y*cell+.5); }
   g.stroke();

@@ -7,10 +7,30 @@ const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
 const core = html.match(/<script id="core">([\s\S]*?)<\/script>/)?.[1];
 assert.ok(core, '找不到 core 脚本');
 const ctx = {}; vm.createContext(ctx); vm.runInContext(core, ctx);
-const { MARD, PALETTE, OUTLINE_IDX, quantize, style, outline, pixelate, despeckle, nearest, hexRgb } = ctx.PDCore;
+const { MARD, PALETTE, OUTLINE_IDX, quantize, style, outline, pixelate, despeckle, nearest, hexRgb, ciede2000 } = ctx.PDCore;
 
 let n = 0;
 const t = (name, fn) => { fn(); console.log('  ok  ' + name); n++; };
+
+// CIEDE2000 标准验证数据（Sharma, Wu & Dalal 2005 公开测试集）
+t('CIEDE2000 与标准测试数据一致', () => {
+  const cases = [
+    [[50, 2.6772, -79.7751], [50, 0, -82.7485], 2.0425],
+    [[50, 3.1571, -77.2803], [50, 0, -82.7485], 2.8615],
+    [[50, 2.8361, -74.0200], [50, 0, -82.7485], 3.4412],
+    [[50, -1.3802, -84.2814], [50, 0, -82.7485], 1.0000],
+    [[50, 0, 0], [50, -1, 2], 2.3669],
+    [[50, 2.4900, -0.0010], [50, -2.4900, 0.0009], 7.1792],
+    [[50, 2.5, 0], [73, 25, -18], 27.1492],
+    [[50, 2.5, 0], [56, -27, -3], 31.9030],
+    [[60.2574, -34.0099, 36.2677], [60.4626, -34.1751, 39.4387], 1.2644],
+    [[2.0776, 0.0795, -1.1350], [0.9033, -0.0636, -0.5514], 0.9082],
+  ];
+  for (const [A, B, want] of cases) {
+    const got = ciede2000(A, B);
+    assert.ok(Math.abs(got - want) < 1e-3, `ΔE00(${A}) vs (${B}) = ${got.toFixed(4)}，应为 ${want}`);
+  }
+});
 
 t('色卡完整且 hex 合法', () => {
   assert.equal(MARD.length, 295);
