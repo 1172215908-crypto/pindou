@@ -12,7 +12,7 @@ body{margin:0;font:14px/1.55 -apple-system,"PingFang SC","Helvetica Neue",sans-s
 #panel h1{font-size:16px;margin:0 0 2px}
 #panel .hint{color:#999;font-size:12px;margin:0 0 14px}
 label{display:block;margin:12px 0 4px;font-size:12px;color:#555}
-input[type=number]{width:100%;padding:6px 8px;border:1px solid var(--bd);border-radius:6px;font:inherit;background:#fff}
+input[type=number],select{width:100%;padding:6px 8px;border:1px solid var(--bd);border-radius:6px;font:inherit;background:#fff}
 .row{display:flex;gap:8px}
 .chk{display:flex;align-items:center;gap:6px;margin:10px 0;font-size:13px;color:#333}
 button{width:100%;padding:9px;margin-top:10px;border:1px solid var(--bd);border-radius:6px;background:#fff;font:inherit;cursor:pointer}
@@ -49,19 +49,28 @@ canvas{background:#fff;box-shadow:0 1px 8px rgba(0,0,0,.14);display:block}
     <div><label>宽（豆）</label><input type="number" id="w" value="58" min="4" max="300"></div>
     <div><label>高（豆）</label><input type="number" id="h" value="58" min="4" max="300"></div>
   </div>
+  <h3 class="sec">预设（换题材后点这里）</h3>
+  <select id="preset">
+    <option value="anime" selected>动漫 / 立绘 / 游戏截图</option>
+    <option value="photo">人像照片 / 合照</option>
+    <option value="pet">宠物 / 动物</option>
+    <option value="scene">风景 / 静物 / 插画</option>
+    <option value="flat">极简图纸（少色好拼）</option>
+  </select>
+
   <h3 class="sec">像素画风</h3>
   <label>色彩浓度 %（提饱和，100 = 原图）</label>
-  <input type="number" id="sat" value="140" min="0" max="250">
-  <label>色阶（每通道档数，越小越平涂）</label>
-  <input type="number" id="lv" value="6" min="0" max="16">
+  <input type="number" id="sat" value="110" min="0" max="250">
+  <label>色阶（亮度分档，0 = 关；越小越平涂）</label>
+  <input type="number" id="lv" value="8" min="0" max="16">
   <label>轮廓描边（0 关 / 1 克制 / 2 明显 / 3 强烈）</label>
-  <input type="number" id="ol" value="1" min="0" max="3">
+  <input type="number" id="ol" value="0" min="0" max="3">
 
   <h3 class="sec">上色号</h3>
   <label>最多用几种颜色</label>
-  <input type="number" id="mc" value="24" min="2" max="295">
-  <label>降噪强度（去孤立杂色豆）</label>
-  <input type="number" id="ds" value="2" min="0" max="3">
+  <input type="number" id="mc" value="32" min="2" max="295">
+  <label>降噪强度（0 关，只删真孤豆）</label>
+  <input type="number" id="ds" value="1" min="0" max="3">
   <div class="chk"><input type="checkbox" id="dither"><label for="dither" style="margin:0">抖动（渐变更细腻，色块更碎）</label></div>
 
   <h3 class="sec">预览与导出</h3>
@@ -85,11 +94,27 @@ canvas{background:#fff;box-shadow:0 1px 8px rgba(0,0,0,.14);display:block}
 const MARD = [["A1","#FAF5CD"],["A2","#FCFED6"],["A3","#FCFF92"],["A4","#F7EC5C"],["A5","#FFE44B"],["A6","#FDA951"],["A7","#FA8C4F"],["A8","#F9E045"],["A9","#F99C5F"],["A10","#F47E36"],["A11","#FEDB99"],["A12","#FDA276"],["A13","#FEC667"],["A14","#F85842"],["A15","#FBF65E"],["A16","#FEFF97"],["A17","#FDE173"],["A18","#FCBF80"],["A19","#FD7E77"],["A20","#F9D66E"],["A21","#FAE393"],["A22","#EDF878"],["A23","#E1C9BD"],["A24","#F3F6A9"],["A25","#FFD785"],["A26","#FEC832"],["B1","#DFF139"],["B2","#64F343"],["B3","#9FF685"],["B4","#5FDF34"],["B5","#39E158"],["B6","#64E0A4"],["B7","#3FAE7C"],["B8","#1D9E54"],["B9","#2A5037"],["B10","#9AD1BA"],["B11","#627032"],["B12","#1A6E3D"],["B13","#C8E87D"],["B14","#ACE84C"],["B15","#305335"],["B16","#C0ED9C"],["B17","#9EB33E"],["B18","#E6ED4F"],["B19","#26B78E"],["B20","#CAEDCF"],["B21","#176268"],["B22","#0A4241"],["B23","#343B1A"],["B24","#E8FAA6"],["B25","#4E846D"],["B26","#907C35"],["B27","#D0E0AF"],["B28","#9EE5BB"],["B29","#C6DF5F"],["B30","#E3FBB1"],["B31","#B2E694"],["B32","#92AD60"],["C1","#FFFEE4"],["C2","#ABF8FE"],["C3","#9EE0F8"],["C4","#44CDFB"],["C5","#06ABE3"],["C6","#54A7E9"],["C7","#3977CC"],["C8","#0F52BD"],["C9","#3349C3"],["C10","#3DBBE3"],["C11","#2ADED3"],["C12","#1E334E"],["C13","#CDE7FE"],["C14","#D6FDFC"],["C15","#21C5C4"],["C16","#1858A2"],["C17","#02D1F3"],["C18","#213244"],["C19","#188690"],["C20","#1A70A9"],["C21","#BEDDFC"],["C22","#6BB1BB"],["C23","#C8E2F9"],["C24","#7EC5F9"],["C25","#A9E8E0"],["C26","#42ADD1"],["C27","#D0DEEF"],["C28","#BDCEED"],["C29","#364A89"],["D1","#ACB7EF"],["D2","#868DD3"],["D3","#3653AF"],["D4","#162C7E"],["D5","#B34EC6"],["D6","#B37BDC"],["D7","#8758A9"],["D8","#E3D2FE"],["D9","#D6BAF5"],["D10","#301A49"],["D11","#BCBAE2"],["D12","#DC99CE"],["D13","#B5038F"],["D14","#882893"],["D15","#2F1E8E"],["D16","#E2E4F0"],["D17","#C7D3F9"],["D18","#9A64B8"],["D19","#D8C2D9"],["D20","#9C34AD"],["D21","#940595"],["D22","#383995"],["D23","#FADBF8"],["D24","#768AE1"],["D25","#4950C2"],["D26","#D6C6EB"],["E1","#F6D4CB"],["E2","#FCC1DD"],["E3","#F6BDE8"],["E4","#E9639E"],["E5","#F1559F"],["E6","#EC4072"],["E7","#C63674"],["E8","#FDDBE9"],["E9","#E575C7"],["E10","#D33997"],["E11","#F7DAD4"],["E12","#F893BF"],["E13","#B5026A"],["E14","#FAD4BF"],["E15","#F5C9CA"],["E16","#FBF4EC"],["E17","#F7E3EC"],["E18","#FBCBDB"],["E19","#F6BBD1"],["E20","#D7C6CE"],["E21","#C09DA4"],["E22","#B58B9F"],["E23","#937D8A"],["E24","#DEBEE5"],["F1","#FF9280"],["F2","#F73D48"],["F3","#EF4D3E"],["F4","#F92B40"],["F5","#E30328"],["F6","#913635"],["F7","#911932"],["F8","#BB0126"],["F9","#E0677A"],["F10","#874628"],["F11","#6F321D"],["F12","#F8516D"],["F13","#F45C45"],["F14","#FCADB2"],["F15","#D50527"],["F16","#F8C0A9"],["F17","#E89B7D"],["F18","#D07E4A"],["F19","#BE454A"],["F20","#C69495"],["F21","#F2BBC6"],["F22","#F7C3D0"],["F23","#EC806D"],["F24","#E09DAF"],["F25","#E84854"],["G1","#FFE4D3"],["G2","#FCC6AC"],["G3","#F1C4A5"],["G4","#DCB387"],["G5","#E7B34E"],["G6","#F3A014"],["G7","#98503A"],["G8","#4B2B1C"],["G9","#E4B685"],["G10","#DA8C42"],["G11","#DAC898"],["G12","#FEC993"],["G13","#B2714B"],["G14","#8B684C"],["G15","#F6F8E3"],["G16","#F2D8C1"],["G17","#79544E"],["G18","#FFE4D6"],["G19","#DD7D41"],["G20","#A5452F"],["G21","#B38561"],["H1","#FBFBFB"],["H2","#FFFFFF"],["H3","#B4B4B4"],["H4","#878787"],["H5","#464648"],["H6","#2C2C2C"],["H7","#010101"],["H8","#E7D6DC"],["H9","#EFEDEE"],["H10","#ECEAEB"],["H11","#CDCDCD"],["H12","#FDF6EE"],["H13","#F4EFD1"],["H14","#CED7D4"],["H15","#98A6A6"],["H16","#1B1213"],["H17","#F0EEEF"],["H18","#FCFFF8"],["H19","#F2EEE5"],["H20","#96A09F"],["H21","#F8FBE6"],["H22","#CACADA"],["H23","#9B9C94"],["M1","#BBC6B6"],["M2","#909994"],["M3","#697E80"],["M4","#E0D4BC"],["M5","#D0CBAE"],["M6","#B0AA86"],["M7","#B0A796"],["M8","#AE8082"],["M9","#A88764"],["M10","#C6B2BB"],["M11","#9D7693"],["M12","#644B51"],["M13","#C79266"],["M14","#C37463"],["M15","#747D7A"],["P1","#F9F9F9"],["P2","#ABABAB"],["P3","#B6DBAF"],["P4","#FEA2A3"],["P5","#EB903F"],["P6","#63CEA2"],["P7","#E79273"],["P8","#ECDB59"],["P9","#DBD9DA"],["P10","#DBC7EA"],["P11","#F1E9D4"],["P12","#E9EDEE"],["P13","#ADCBF1"],["P14","#337BAD"],["P15","#668575"],["P16","#FDC24E"],["P17","#FDA42E"],["P18","#FEBDA7"],["P19","#FFDEE9"],["P20","#FCBFD1"],["P21","#E8BEC2"],["P22","#DFAAA4"],["P23","#A3656A"],["Q1","#F2A5E8"],["Q2","#E9EC91"],["Q3","#FFFF00"],["Q4","#FFEBFA"],["Q5","#76CEDE"],["R1","#D40E1F"],["R2","#F13484"],["R3","#FB852B"],["R4","#F8ED33"],["R5","#32C958"],["R6","#1EBA93"],["R7","#1D779C"],["R8","#1960C8"],["R9","#945AB1"],["R10","#F8DA54"],["R11","#FCECF7"],["R12","#D8D4D3"],["R13","#56534E"],["R14","#A3E7DC"],["R15","#78CEE7"],["R16","#3FCDCE"],["R17","#4E8379"],["R18","#7DCA9C"],["R19","#C8E664"],["R20","#E3CCBA"],["R21","#A17140"],["R22","#6B372C"],["R23","#F6BB6F"],["R24","#F3C6C0"],["R25","#C76A62"],["R26","#D093BC"],["R27","#E58EAE"],["R28","#9F85CF"],["T1","#FCFDFF"],["Y1","#FF6FB7"],["Y2","#FDB583"],["Y3","#D8FCA4"],["Y4","#91DAFB"],["Y5","#E987EA"],["Y6","#F7D4B8"],["Y7","#F1FA7D"],["Y8","#5EE88C"],["Y9","#F8F5FE"],["ZG1","#DAABB3"],["ZG2","#D6AA87"],["ZG3","#C1BD8D"],["ZG4","#96B69F"],["ZG5","#849DC6"],["ZG6","#94BFE2"],["ZG7","#E2A9D2"],["ZG8","#AB91C0"]];
 
 function hexRgb(h){return [parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];}
-const PALETTE = MARD.map(([code,hex])=>{const [r,g,b]=hexRgb(hex);return {code,hex,r,g,b,lum:0.299*r+0.587*g+0.114*b};});
+
+// sRGB → CIELAB(D65)：在感知均匀空间里比色，才不会把棕发配成灰绿
+function srgb2lab(r,g,b){
+  const f=v=>{v/=255; return v<=0.04045 ? v/12.92 : Math.pow((v+0.055)/1.055,2.4);};
+  const R=f(r),G=f(g),B=f(b);
+  const X=(R*0.4124+G*0.3576+B*0.1805)/0.95047;
+  const Y= R*0.2126+G*0.7152+B*0.0722;
+  const Z=(R*0.0193+G*0.1192+B*0.9505)/1.08883;
+  const k=t=> t>0.008856 ? Math.cbrt(t) : 7.787*t+16/116;
+  const x=k(X),y=k(Y),z=k(Z);
+  return [116*y-16, 500*(x-y), 200*(y-z)];
+}
+const PALETTE = MARD.map(([code,hex])=>{
+  const [r,g,b]=hexRgb(hex);
+  return {code,hex,r,g,b,lum:0.299*r+0.587*g+0.114*b,lab:srgb2lab(r,g,b)};
+});
 const ALL = PALETTE.map((_,i)=>i);
 const OUTLINE_IDX = Math.max(0,PALETTE.findIndex(p=>p.code==='H7'));   // 描边用的纯黑 H7
 
 // ⓪ 像素画风预处理：提饱和 + 压色阶（把照片的连续渐变压成一块块平涂颜色，这是「像素画」而非「马赛克」的关键）
+//   色阶只压「亮度」并按比例缩放 RGB —— 逐通道各自取整会把浅灰裂成粉/黄/绿（实测过，是色相偏移的元凶）
 function style(src,opt={}){
   const sat = opt.sat===undefined ? 1 : opt.sat;
   const lv  = Math.round(opt.levels||0);
@@ -101,7 +126,10 @@ function style(src,opt={}){
       const l=0.299*r+0.587*g+0.114*b;
       r=l+(r-l)*sat; g=l+(g-l)*sat; b=l+(b-l)*sat;
     }
-    if(q){ r=Math.round(r/255*q)/q*255; g=Math.round(g/255*q)/q*255; b=Math.round(b/255*q)/q*255; }
+    if(q){
+      const l=0.299*r+0.587*g+0.114*b;
+      if(l>1){ const k=(Math.round(l/255*q)/q*255)/l; r*=k; g*=k; b*=k; }
+    }
     out[i]=r; out[i+1]=g; out[i+2]=b; out[i+3]=src[i+3];
   }
   return out;
@@ -127,14 +155,16 @@ function outline(idx,w,h,level){
   return out;
 }
 
-// redmean 加权距离：比裸欧氏更接近人眼，一行代价
-function dist(r,g,b,p){
-  const rm=(r+p.r)/2, dr=r-p.r, dg=g-p.g, db=b-p.b;
-  return (2+rm/256)*dr*dr + 4*dg*dg + (2+(255-rm)/256)*db*db;
+// 色差用 CIELAB 欧氏距离（ΔE76）。redmean 会把绿通道加权 4 倍，实测把棕发配成灰绿，所以弃用
+function dist(q,p){
+  const l=PALETTE[p].lab;
+  const d0=q[0]-l[0], d1=q[1]-l[1], d2=q[2]-l[2];
+  return d0*d0 + d1*d1 + d2*d2;
 }
 function nearest(r,g,b,cands){
+  const q=srgb2lab(r,g,b);
   let best=-1, bd=Infinity;
-  for(const i of cands){const d=dist(r,g,b,PALETTE[i]); if(d<bd){bd=d;best=i;}}
+  for(const i of cands){const d=dist(q,i); if(d<bd){bd=d;best=i;}}
   return best;
 }
 
@@ -146,13 +176,13 @@ function pixelate(src,sw,sh,w,h){
     const y0=Math.floor(y*sh/h), y1=Math.min(sh,Math.max(y0+1,Math.floor((y+1)*sh/h)));
     for(let x=0;x<w;x++){
       const x0=Math.floor(x*sw/w), x1=Math.min(sw,Math.max(x0+1,Math.floor((x+1)*sw/w)));
-      const bins=new Map();           // 4bit/通道 的粗直方图
+      const bins=new Map();           // 5bit/通道 直方图：比 4bit 更细，避免把两种颜色错并成一格主色
       let opaque=0,total=0;
       for(let sy=y0;sy<y1;sy++) for(let sx=x0;sx<x1;sx++){
         const j=(sy*sw+sx)*4; total++;
         if(src[j+3]<128) continue;
         opaque++;
-        const k=((src[j]>>4)<<8)|((src[j+1]>>4)<<4)|(src[j+2]>>4);
+        const k=((src[j]>>3)<<10)|((src[j+1]>>3)<<5)|(src[j+2]>>3);
         let b=bins.get(k); if(!b){b=[0,0,0,0];bins.set(k,b);}
         b[0]++; b[1]+=src[j]; b[2]+=src[j+1]; b[3]+=src[j+2];
       }
@@ -286,6 +316,21 @@ let timer=null;
 const kick = () => { clearTimeout(timer); timer=setTimeout(build,120); };
 ['#w','#mc','#ds','#sat','#lv','#ol','#cell','#dither','#codes'].forEach(s => $(s).oninput = kick);
 $('#w').oninput = () => { fitHeight(); kick(); };
+
+// 题材预设：一键把五个参数切到该题材的调好的值（都是拿真实图对比挑出来的）
+const PRESETS = {
+  anime:{sat:110,lv:8, ol:0,ds:1,mc:32},
+  photo:{sat:115,lv:6, ol:1,ds:2,mc:24},
+  pet:  {sat:115,lv:6, ol:1,ds:2,mc:28},
+  scene:{sat:120,lv:6, ol:0,ds:2,mc:32},
+  flat: {sat:110,lv:6, ol:1,ds:2,mc:12}
+};
+$('#preset').onchange = () => {
+  const p = PRESETS[$('#preset').value];
+  if(!p) return;
+  for(const k in p) $('#'+k).value = p[k];
+  kick();
+};
 // 读数字输入框：空值/非法值退回默认，再夹到区间里
 const num = (sel,def,min,max) => {
   const v=+$(sel).value;
